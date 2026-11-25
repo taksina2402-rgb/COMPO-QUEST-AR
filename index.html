@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>COMPO-QUEST AR: ผจญภัยโลกวัสดุผสม</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js สำหรับจำลองวัตถุ 3D ใน AR -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Tone.js สำหรับสร้างเสียงประกอบเกมโดยไม่ต้องใช้ไฟล์เสียงภายนอก -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- Google Fonts: Kanit & Orbitron -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700;800&family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            overflow-x: hidden;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            background-color: #090d16;
+            color: #ffffff;
+        }
+        .font-sci {
+            font-family: 'Orbitron', 'Kanit', sans-serif;
+        }
+
+        /* พื้นหลังตาราง AR ไซไฟ */
+        .ar-grid-bg {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(6, 182, 212, 0.15) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(6, 182, 212, 0.15) 1px, transparent 1px);
+            animation: gridMove 15s linear infinite;
+        }
+        @keyframes gridMove {
+            0% { background-position: 0 0; }
+            100% { background-position: 40px 40px; }
+        }
+
+        /* เส้นสแกน AR */
+        .ar-scanner-line {
+            position: absolute;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #22d3ee, #a855f7, transparent);
+            box-shadow: 0 0 15px #22d3ee;
+            animation: scanVertical 3.5s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 5;
+        }
+        @keyframes scanVertical {
+            0%, 100% { top: 5%; opacity: 0.3; }
+            50% { top: 95%; opacity: 0.9; }
+        }
+
+        /* เอฟเฟกต์การ์ดกระจก AR (Glassmorphism) */
+        .ar-glass {
+            background: rgba(15, 23, 42, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 0 15px rgba(56, 189, 248, 0.1);
+        }
+
+        /* ปุ่ม 3D สไตล์เกม */
+        .btn-game {
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+        .btn-game:active {
+            transform: translateY(3px) scale(0.98);
+        }
+
+        /* เอฟเฟกต์พลิกแผ่นป้าย ด่าน 3 */
+        .flip-card {
+            perspective: 1000px;
+        }
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-style: preserve-3d;
+        }
+        .flip-card.flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+        .flip-card-front, .flip-card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            border-radius: 1rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+        }
+        .flip-card-back {
+            transform: rotateY(180deg);
+        }
+
+        /* แอนิเมชันลอยตัว */
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-8px); }
+        }
+        .animate-float {
+            animation: float 3s ease-in-out infinite;
+        }
+
+        /* กรอบมุมมองกล้อง AR */
+        .hud-corner {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-color: #22d3ee;
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="min-h-screen w-full relative overflow-x-hidden flex flex-col">
+
+    <!-- พื้นหลังกล้อง AR จริง (จะแสดงเมื่อเปิดกล้องสำเร็จ) -->
+    <video id="ar-camera-feed" autoplay playsinline muted class="fixed inset-0 w-full h-full object-cover z-0 hidden opacity-70"></video>
+    
+    <!-- พื้นหลัง AR จำลอง (แสดงเมื่อไม่ได้เปิดกล้อง หรือเป็นเลเยอร์ทับ) -->
+    <div id="ar-sim-bg" class="fixed inset-0 z-0 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 ar-grid-bg">
+        <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.12)_0%,transparent_70%)]"></div>
+    </div>
+
+    <!-- เลเยอร์ Canvas 3D (Three.js) สำหรับจำลองโมเดลวัสดุผสมลอยใน AR -->
+    <div id="three-container" class="fixed inset-0 z-0 pointer-events-none opacity-85"></div>
+
+    <!-- เส้นสแกน AR & มุม HUD -->
+    <div class="ar-scanner-line"></div>
+    <div class="hud-corner top-3 left-3 border-t-2 border-l-2 rounded-tl-md"></div>
+    <div class="hud-corner top-3 right-3 border-t-2 border-r-2 rounded-tr-md"></div>
+    <div class="hud-corner bottom-3 left-3 border-b-2 border-l-2 rounded-bl-md"></div>
+    <div class="hud-corner bottom-3 right-3 border-b-2 border-r-2 rounded-br-md"></div>
+
+    <!-- แถบควบคุมด้านบน (เสียง & โหมดกล้อง AR) -->
+    <header class="relative z-20 flex justify-between items-center px-4 py-3 max-w-4xl mx-auto w-full">
+        <div class="flex items-center gap-2 bg-slate-900/80 border border-cyan-500/40 px-3 py-1.5 rounded-full text-xs sm:text-sm">
+            <span id="ar-status-dot" class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+            <span id="ar-status-text" class="text-cyan-300 font-semibold tracking-wide">AR SIMULATION</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button id="btn-toggle-camera" onclick="toggleCameraAR()" class="btn-game bg-cyan-600/80 hover:bg-cyan-500 text-white text-xs sm:text-sm font-semibold px-3 py-1.5 rounded-full border border-cyan-300/50 shadow-lg flex items-center gap-1.5">
+                <i class="fa-solid fa-camera"></i>
+                <span id="cam-btn-label">เปิดกล้อง AR</span>
+            </button>
+            <button id="btn-toggle-sound" onclick="toggleSound()" class="btn-game bg-slate-800/90 hover:bg-slate-700 text-amber-400 w-9 h-9 rounded-full border border-slate-600 flex items-center justify-center shadow-lg" title="เปิด/ปิดเสียง">
+                <i id="sound-icon" class="fa-solid fa-volume-high"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- กล่องแจ้งเตือนแบบกำหนดเอง (แทน alert) -->
+    <div id="toast-box" class="fixed top-16 left-1/2 transform -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-4">
+        <div id="toast-content" class="px-5 py-2.5 rounded-full font-bold text-sm sm:text-base shadow-2xl border backdrop-blur-md flex items-center gap-2"></div>
+    </div>
+
+    <!-- พื้นที่หลักของแอปพลิเคชัน -->
+    <main class="relative z-10 flex-grow flex flex-col justify-center items-center px-4 py-2 max-w-4xl mx-auto w-full">
+
+        <!-- ========================================== -->
+        <!-- 1. หน้าปกเกม (COVER SCREEN)                -->
+        <!-- ========================================== -->
+        <section id="screen-cover" class="w-full flex flex-col items-center text-center my-auto py-4">
+            <!-- ป้ายชื่อภารกิจ -->
+            <div class="inline-flex items-center gap-2 px-4 py-1 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-400/50 text-amber-300 text-xs sm:text-sm font-bold mb-3 animate-bounce">
+                <i class="fa-solid fa-atom"></i> ภารกิจนักสำรวจวัสดุแห่งอนาคต (AR LAB)
+            </div>
+
+            <!-- โลโก้ชื่อเกม -->
+            <div class="relative mb-2">
+                <h1 class="font-sci text-4xl sm:text-6xl font-extrabold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-400 to-purple-400 drop-shadow-[0_4px_20px_rgba(34,211,238,0.5)]">
+                    COMPO-QUEST AR
+                </h1>
+                <h2 class="text-xl sm:text-3xl font-extrabold text-white mt-1 tracking-wide drop-shadow">
+                    ผจญภัยโลก<span class="text-amber-400">วัสดุผสม</span> 3 มิติ
+                </h2>
+            </div>
+
+            <!-- ภาพประกอบโครงสร้างวัสดุผสมแบบอินเทอร์แอคทีฟบนหน้าปก -->
+            <div class="ar-glass rounded-3xl p-4 sm:p-6 my-4 w-full max-w-xl relative overflow-hidden">
+                <div class="text-xs text-cyan-300 font-semibold mb-3 flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-cube animate-spin"></i> โมเดลจำลองโครงสร้างวัสดุผสม (Composite Structure)
+                </div>
+                
+                <!-- กราฟิก SVG อธิบายสูตรวัสดุผสมจากเนื้อหา -->
+                <div class="grid grid-cols-5 items-center gap-1 sm:gap-2 text-center">
+                    <!-- วัสดุพื้น -->
+                    <div class="col-span-2 bg-slate-800/80 border border-sky-400/40 rounded-2xl p-2.5 animate-float">
+                        <svg viewBox="0 0 120 50" class="w-full h-10 mx-auto mb-1">
+                            <rect x="10" y="18" width="100" height="14" rx="7" fill="#38bdf8" stroke="#bae6fd" stroke-width="2"/>
+                            <circle cx="17" cy="25" r="5" fill="#0284c7"/>
+                        </svg>
+                        <div class="text-xs sm:text-sm font-bold text-sky-300">วัสดุพื้น</div>
+                        <div class="text-[10px] sm:text-xs text-slate-300">(เมทริกซ์)</div>
+                    </div>
+
+                    <!-- เครื่องหมายบวก -->
+                    <div class="col-span-1 text-2xl sm:text-3xl font-extrabold text-amber-400">+</div>
+
+                    <!-- วัสดุเสริม -->
+                    <div class="col-span-2 bg-slate-800/80 border border-purple-400/40 rounded-2xl p-2.5 animate-float" style="animation-delay: 0.5s;">
+                        <svg viewBox="0 0 120 50" class="w-full h-10 mx-auto mb-1">
+                            <polygon points="20,15 95,10 105,22 30,28" fill="#c084fc" stroke="#f3e8ff" stroke-width="1.5"/>
+                            <polygon points="20,15 30,28 30,40 20,27" fill="#9333ea"/>
+                            <polygon points="30,28 105,22 105,34 30,40" fill="#7e22ce"/>
+                        </svg>
+                        <div class="text-xs sm:text-sm font-bold text-purple-300">วัสดุเสริม</div>
+                        <div class="text-[10px] sm:text-xs text-slate-300">(ตัวเสริมแรง)</div>
+                    </div>
+                </div>
+
+                <!-- ผลลัพธ์ -->
+                <div class="mt-3 pt-3 border-t border-slate-700/80 flex flex-col sm:flex-row items-center justify-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xl font-extrabold text-emerald-400">=</span>
+                        <div class="bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-400/60 px-4 py-1.5 rounded-xl flex items-center gap-2">
+                            <i class="fa-solid fa-layer-group text-emerald-400 text-lg"></i>
+                            <div class="text-left">
+                                <div class="text-sm sm:text-base font-extrabold text-emerald-300">วัสดุผสม (Composite)</div>
+                                <div class="text-[11px] text-slate-200">ไม่ละลายเข้าด้วยกัน • สมบัติเฉพาะตามต้องการ</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- การ์ดแนะนำ 3 ด่าน -->
+            <div class="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-xl mb-5">
+                <div class="ar-glass rounded-2xl p-2.5 text-center border-cyan-400/30">
+                    <div class="w-8 h-8 mx-auto rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold mb-1">1</div>
+                    <div class="text-xs sm:text-sm font-bold text-white">สแกนตอบคำถาม</div>
+                    <div class="text-[10px] sm:text-xs text-cyan-300">4 ตัวเลือก 5 ข้อ</div>
+                </div>
+                <div class="ar-glass rounded-2xl p-2.5 text-center border-purple-400/30">
+                    <div class="w-8 h-8 mx-auto rounded-full bg-purple-500/20 text-purple-300 flex items-center justify-center font-bold mb-1">2</div>
+                    <div class="text-xs sm:text-sm font-bold text-white">จับคู่พลังงาน</div>
+                    <div class="text-[10px] sm:text-xs text-purple-300">เชื่อมโยงความรู้</div>
+                </div>
+                <div class="ar-glass rounded-2xl p-2.5 text-center border-amber-400/30">
+                    <div class="w-8 h-8 mx-auto rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold mb-1">3</div>
+                    <div class="text-xs sm:text-sm font-bold text-white">เปิดแผ่นป้าย AR</div>
+                    <div class="text-[10px] sm:text-xs text-amber-300">จับคู่ความจำ</div>
+                </div>
+            </div>
+
+            <!-- ปุ่มเริ่มเกม & ปุ่มทบทวนความรู้ -->
+            <div class="flex flex-col sm:flex-row gap-3 w-full max-w-md">
+                <button onclick="startGame()" class="btn-game flex-1 py-4 px-6 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-lg sm:text-xl shadow-[0_0_25px_rgba(34,211,238,0.5)] border border-white/30 flex items-center justify-center gap-3">
+                    <i class="fa-solid fa-play"></i> เริ่มผจญภัย AR
+                </button>
+                <button onclick="toggleStudyModal(true)" class="btn-game py-3 sm:py-4 px-5 rounded-2xl bg-slate-800/90 hover:bg-slate-700 text-amber-300 font-bold text-sm sm:text-base border border-amber-400/40 flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-book-open"></i> คลังข้อมูล
+                </button>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- 2. แถบสถานะระหว่างเล่น (GAME HUD)          -->
+        <!-- ========================================== -->
+        <div id="game-hud" class="w-full max-w-3xl mb-3 hidden">
+            <div class="ar-glass rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <!-- บอกด่านปัจจุบัน -->
+                <div class="flex items-center gap-2">
+                    <span id="hud-level-badge" class="px-3 py-1 rounded-xl bg-cyan-500/20 border border-cyan-400 text-cyan-300 font-extrabold text-xs sm:text-sm">
+                        ด่านที่ 1/3
+                    </span>
+                    <span id="hud-level-name" class="font-bold text-sm sm:text-base text-white">สแกนตอบคำถาม</span>
+                </div>
+
+                <!-- เวลาและคะแนน -->
+                <div class="flex items-center gap-3 sm:gap-5">
+                    <!-- ตัวจับเวลา -->
+                    <div class="flex items-center gap-1.5 bg-slate-900/90 px-3 py-1 rounded-xl border border-amber-500/40">
+                        <i class="fa-solid fa-stopwatch text-amber-400"></i>
+                        <span id="hud-timer" class="font-sci font-bold text-base sm:text-lg text-amber-300">60</span>
+                        <span class="text-xs text-slate-400">วิ</span>
+                    </div>
+
+                    <!-- คะแนนรวม -->
+                    <div class="flex items-center gap-1.5 bg-slate-900/90 px-3 py-1 rounded-xl border border-emerald-500/40">
+                        <i class="fa-solid fa-star text-emerald-400"></i>
+                        <span id="hud-score" class="font-sci font-bold text-base sm:text-lg text-emerald-300">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- 3. ด่านที่ 1: ข้อสอบ 4 ตัวเลือก 5 ข้อ      -->
+        <!-- ========================================== -->
+        <section id="screen-level-1" class="w-full max-w-3xl hidden">
+            <div class="ar-glass rounded-3xl p-5 sm:p-7">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-xs sm:text-sm font-bold text-cyan-300 bg-cyan-950/80 px-3 py-1 rounded-full border border-cyan-500/40">
+                        ข้อที่ <span id="q1-current">1</span> / 5
+                    </span>
+                    <span class="text-xs text-slate-300">ตอบถูก +100 คะแนน</span>
+                </div>
+
+                <!-- แถบความคืบหน้า -->
+                <div class="w-full bg-slate-800 h-2 rounded-full mb-5 overflow-hidden">
+                    <div id="q1-progress" class="bg-gradient-to-r from-cyan-400 to-blue-500 h-full transition-all duration-300" style="width: 20%"></div>
+                </div>
+
+                <!-- คำถาม -->
+                <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-4 sm:p-5 mb-5">
+                    <h3 id="q1-question" class="text-base sm:text-xl font-bold text-white leading-relaxed">
+                        กำลังโหลดคำถาม...
+                    </h3>
+                </div>
+
+                <!-- ตัวเลือก 4 ข้อ -->
+                <div id="q1-options" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <!-- สร้างปุ่มตัวเลือกด้วย JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- 4. ด่านที่ 2: จับคู่ความรู้วัสดุผสม        -->
+        <!-- ========================================== -->
+        <section id="screen-level-2" class="w-full max-w-3xl hidden">
+            <div class="ar-glass rounded-3xl p-4 sm:p-6">
+                <div class="text-center mb-4">
+                    <h3 class="text-lg sm:text-xl font-extrabold text-purple-300">
+                        <i class="fa-solid fa-link mr-1"></i> จับคู่คำศัพท์และความหมายให้ถูกต้อง
+                    </h3>
+                    <p class="text-xs sm:text-sm text-slate-300">แตะเลือกฝั่งซ้าย แล้วแตะคู่ที่ตรงกันทางฝั่งขวา (คู่ละ +100 คะแนน)</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 sm:gap-5">
+                    <!-- คอลัมน์ซ้าย: หัวข้อ -->
+                    <div id="match-left-col" class="flex flex-col gap-2.5 sm:gap-3"></div>
+                    <!-- คอลัมน์ขวา: คำอธิบาย/ตัวอย่าง -->
+                    <div id="match-right-col" class="flex flex-col gap-2.5 sm:gap-3"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- 5. ด่านที่ 3: เปิดแผ่นป้าย AR Memory       -->
+        <!-- ========================================== -->
+        <section id="screen-level-3" class="w-full max-w-3xl hidden">
+            <div class="ar-glass rounded-3xl p-4 sm:p-6">
+                <div class="text-center mb-4">
+                    <h3 class="text-lg sm:text-xl font-extrabold text-amber-300">
+                        <i class="fa-solid fa-clone mr-1"></i> เปิดแผ่นป้าย AR จับคู่ข้อมูลวัสดุผสม
+                    </h3>
+                    <p class="text-xs sm:text-sm text-slate-300">เปิดแผ่นป้ายครั้งละ 2 ใบ เพื่อจับคู่คำศัพท์กับความหมายที่สัมพันธ์กัน (คู่ละ +120 คะแนน)</p>
+                </div>
+
+                <!-- ตารางแผ่นป้าย 12 ใบ (6 คู่) -->
+                <div id="memory-grid" class="grid grid-cols-3 sm:grid-cols-4 gap-2.5 sm:gap-3">
+                    <!-- สร้างการ์ดด้วย JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- 6. หน้าคั่นระหว่างด่าน (LEVEL CLEAR MODAL)  -->
+        <!-- ========================================== -->
+        <section id="screen-level-clear" class="w-full max-w-md hidden">
+            <div class="ar-glass rounded-3xl p-6 sm:p-8 text-center border-2 border-emerald-400/60 shadow-[0_0_40px_rgba(16,185,129,0.3)]">
+                <div class="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center text-3xl text-emerald-300 mb-3 animate-bounce">
+                    <i class="fa-solid fa-check-double"></i>
+                </div>
+                <h2 id="clear-title" class="text-2xl sm:text-3xl font-extrabold text-white mb-1">ผ่านด่านที่ 1!</h2>
+                <p id="clear-subtitle" class="text-sm text-cyan-300 mb-5">ยอดเยี่ยมมาก นักสำรวจวัสดุ!</p>
+
+                <div class="bg-slate-900/80 rounded-2xl p-4 mb-6 space-y-2 text-sm sm:text-base border border-slate-700">
+                    <div class="flex justify-between">
+                        <span class="text-slate-300">คะแนนด่านนี้:</span>
+                        <span id="clear-base-score" class="font-bold text-white">+500</span>
+                    </div>
+                    <div class="flex justify-between text-amber-300">
+                        <span><i class="fa-solid fa-bolt mr-1"></i>โบนัสเวลาคงเหลือ (<span id="clear-time-left">0</span> วิ):</span>
+                        <span id="clear-bonus-score" class="font-bold">+150</span>
+                    </div>
+                    <div class="border-t border-slate-700 pt-2 flex justify-between text-lg font-extrabold text-emerald-400">
+                        <span>คะแนนสะสมรวม:</span>
+                        <span id="clear-total-score">650</span>
+                    </div>
+                </div>
+
+                <button id="btn-next-level" onclick="proceedNextLevel()" class="btn-game w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-lg shadow-lg flex items-center justify-center gap-2">
+                    <span>ลุยด่านต่อไป</span> <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- 7. หน้าสรุปผลคะแนนหลังจบเกม (SUMMARY)      -->
+        <!-- ========================================== -->
+        <section id="screen-summary" class="w-full max-w-lg hidden">
+            <div class="ar-glass rounded-3xl p-6 sm:p-8 text-center border-2 border-amber-400/60 shadow-[0_0_50px_rgba(251,191,36,0.3)]">
+                <div class="inline-block px-4 py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-bold mb-2">
+                    MISSION ACCOMPLISHED
+                </div>
+                <h2 class="text-2xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 mb-1">
+                    สรุปผลการผจญภัย AR
+                </h2>
+                <p id="summary-rank" class="text-base sm:text-lg font-bold text-cyan-300 mb-4">ระดับ: ปรมาจารย์ด้านวัสดุผสม 🏆</p>
+
+                <!-- ดาวรางวัล -->
+                <div id="summary-stars" class="flex justify-center gap-3 text-3xl sm:text-4xl text-amber-400 mb-5">
+                    <i class="fa-solid fa-star animate-pulse"></i>
+                    <i class="fa-solid fa-star animate-pulse" style="animation-delay: 0.2s"></i>
+                    <i class="fa-solid fa-star animate-pulse" style="animation-delay: 0.4s"></i>
+                </div>
+
+                <!-- รายละเอียดคะแนนแต่ละด่าน -->
+                <div class="bg-slate-900/85 rounded-2xl p-4 mb-5 space-y-2.5 text-sm sm:text-base border border-slate-700/80 text-left">
+                    <div class="flex justify-between items-center">
+                        <span class="text-cyan-300 font-semibold"><i class="fa-solid fa-1 w-5"></i> ด่านที่ 1 (ตอบคำถาม):</span>
+                        <span id="sum-lvl1" class="font-bold text-white">0 คะแนน</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-purple-300 font-semibold"><i class="fa-solid fa-2 w-5"></i> ด่านที่ 2 (จับคู่ความรู้):</span>
+                        <span id="sum-lvl2" class="font-bold text-white">0 คะแนน</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-amber-300 font-semibold"><i class="fa-solid fa-3 w-5"></i> ด่านที่ 3 (เปิดแผ่นป้าย):</span>
+                        <span id="sum-lvl3" class="font-bold text-white">0 คะแนน</span>
+                    </div>
+                    <div class="border-t border-slate-700 pt-2 flex justify-between items-center text-amber-400 font-bold">
+                        <span><i class="fa-solid fa-bolt w-5"></i> คะแนนโบนัสเวลารวม:</span>
+                        <span id="sum-bonus">+0 คะแนน</span>
+                    </div>
+                    <div class="border-t border-slate-600 pt-2.5 flex justify-between items-center text-xl font-extrabold text-emerald-400">
+                        <span>คะแนนสุทธิทั้งหมด:</span>
+                        <span id="sum-grand-total" class="font-sci text-2xl">0</span>
+                    </div>
+                </div>
+
+                <!-- ปุ่มเล่นใหม่ (สุ่มโจทย์ใหม่ทั้งหมด) -->
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <button onclick="startGame()" class="btn-game flex-1 py-3.5 px-5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-base sm:text-lg shadow-lg flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-rotate-right"></i> เล่นอีกครั้ง (สุ่มโจทย์ใหม่)
+                    </button>
+                    <button onclick="goHome()" class="btn-game py-3.5 px-5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-base border border-slate-600 flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-house"></i> หน้าปก
+                    </button>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ========================================== -->
+    <!-- หน้าต่างคลังความรู้ (STUDY SHEET MODAL)     -->
+    <!-- ========================================== -->
+    <div id="study-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md hidden flex items-center justify-center p-4">
+        <div class="ar-glass rounded-3xl max-w-lg w-full p-6 border border-cyan-400/50 relative max-h-[90vh] overflow-y-auto">
+            <button onclick="toggleStudyModal(false)" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+            <h3 class="text-xl sm:text-2xl font-extrabold text-amber-400 mb-3 flex items-center gap-2">
+                <i class="fa-solid fa-microscope"></i> สรุปเนื้อหา: วัสดุผสม
+            </h3>
+            <div class="space-y-4 text-sm sm:text-base text-slate-200 leading-relaxed">
+                <div class="bg-slate-900/80 p-3.5 rounded-2xl border border-cyan-500/30">
+                    <strong class="text-cyan-300 block mb-1">1. ความหมายของวัสดุผสม</strong>
+                    วัสดุที่ประกอบด้วยวัสดุ <strong>2 ประเภทขึ้นไป</strong> โดยองค์ประกอบนั้น <strong>ไม่ละลายเข้าด้วยกัน</strong> ทำให้มีสมบัติเฉพาะตามที่ต้องการ
+                </div>
+                <div class="bg-slate-900/80 p-3.5 rounded-2xl border border-purple-500/30">
+                    <strong class="text-purple-300 block mb-1">2. สมบัติทางกายภาพของวัสดุผสม</strong>
+                    ประกอบด้วยองค์ประกอบหลัก 2 ส่วน คือ:
+                    <ul class="list-disc list-inside mt-1 space-y-1 text-slate-300">
+                        <li><span class="text-sky-300 font-semibold">วัสดุพื้น หรือ เมทริกซ์ (Matrix)</span></li>
+                        <li><span class="text-purple-300 font-semibold">วัสดุเสริม หรือ ตัวเสริมแรง (Reinforcement)</span></li>
+                    </ul>
+                </div>
+                <div class="bg-slate-900/80 p-3.5 rounded-2xl border border-emerald-500/30">
+                    <strong class="text-emerald-300 block mb-1">3. การใช้ประโยชน์ของวัสดุผสม</strong>
+                    <ul class="list-disc list-inside mt-1 space-y-1 text-slate-300">
+                        <li><span class="text-amber-300 font-semibold">วัสดุผสมจากธรรมชาติ:</span> เช่น <strong>กระดูก, ไม้</strong></li>
+                        <li><span class="text-emerald-300 font-semibold">วัสดุผสมจากการสังเคราะห์:</span> เช่น <strong>คอนกรีต, ไฟเบอร์กลาสส์</strong></li>
+                    </ul>
+                </div>
+            </div>
+            <button onclick="toggleStudyModal(false)" class="btn-game w-full mt-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold">
+                เข้าใจแล้ว พร้อมลุย!
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /* =====================================================================
+           1. ระบบคลังข้อมูลเนื้อหา (อ้างอิงจากภาพบทเรียนเรื่อง "วัสดุผสม")
+           ===================================================================== */
+        const QUIZ_BANK = [
+            {
+                q: "ข้อใดให้ความหมายของ 'วัสดุผสม' ได้ถูกต้องที่สุด?",
+                options: [
+                    "วัสดุที่ประกอบด้วยวัสดุ 2 ประเภทขึ้นไป โดยไม่ละลายเข้าด้วยกัน",
+                    "วัสดุชนิดเดียวที่นำมาหลอมละลายจนเป็นเนื้อเดียวกัน",
+                    "สารละลายที่เกิดจากการผสมของเหลว 2 ชนิดเข้าด้วยกัน",
+                    "วัสดุที่เกิดขึ้นเองตามธรรมชาติเพียงอย่างเดียวเท่านั้น"
+                ],
+                answer: "วัสดุที่ประกอบด้วยวัสดุ 2 ประเภทขึ้นไป โดยไม่ละลายเข้าด้วยกัน"
+            },
+            {
+                q: "เหตุใดจึงต้องมีการนำวัสดุ 2 ประเภทขึ้นไปมาประกอบเป็น 'วัสดุผสม'?",
+                options: [
+                    "เพื่อให้ได้วัสดุที่มีสมบัติเฉพาะตามที่ต้องการ",
+                    "เพื่อให้วัสดุสามารถละลายน้ำได้ง่ายขึ้น",
+                    "เพื่อลดความแข็งแรงของวัสดุให้เปราะบางลง",
+                    "เพื่อให้วัสดุมีราคาแพงและหายากขึ้น"
+                ],
+                answer: "เพื่อให้ได้วัสดุที่มีสมบัติเฉพาะตามที่ต้องการ"
+            },
+            {
+                q: "โครงสร้างทางกายภาพของวัสดุผสม ประกอบด้วยองค์ประกอบ 2 ส่วนใด?",
+                options: [
+                    "วัสดุพื้น (เมทริกซ์) และ วัสดุเสริม (ตัวเสริมแรง)",
+                    "ตัวทำละลาย และ ตัวถูกละลาย",
+                    "วัสดุตัวนำ และ วัสดุฉนวนไฟฟ้า",
+                    "วัสดุธรรมชาติ และ วัสดุเหลือใช้"
+                ],
+                answer: "วัสดุพื้น (เมทริกซ์) และ วัสดุเสริม (ตัวเสริมแรง)"
+            },
+            {
+                q: "ข้อใดต่อไปนี้จัดเป็น 'วัสดุผสมจากธรรมชาติ' ทั้งหมด?",
+                options: [
+                    "กระดูก และ ไม้",
+                    "คอนกรีต และ ไฟเบอร์กลาสส์",
+                    "กระดูก และ คอนกรีต",
+                    "ไม้ และ ไฟเบอร์กลาสส์"
+                ],
+                answer: "กระดูก และ ไม้"
+            },
+            {
+                q: "ข้อใดต่อไปนี้จัดเป็น 'วัสดุผสมจากการสังเคราะห์' ทั้งหมด?",
+                options: [
+                    "คอนกรีต และ ไฟเบอร์กลาสส์",
+                    "กระดูก และ ไม้",
+                    "ไฟเบอร์กลาสส์ และ ไม้",
+                    "คอนกรีต และ กระดูก"
+                ],
+                answer: "คอนกรีต และ ไฟเบอร์กลาสส์"
+            },
+            {
+                q: "'เมทริกซ์ (Matrix)' ในโครงสร้างของวัสดุผสม หมายถึงข้อใด?",
+                options: [
+                    "วัสดุพื้น",
+                    "ตัวเสริมแรง",
+                    "วัสดุผสมจากการสังเคราะห์",
+                    "วัสดุผสมจากธรรมชาติ"
+                ],
+                answer: "วัสดุพื้น"
+            },
+            {
+                q: "องค์ประกอบใดที่ทำหน้าที่ช่วยเพิ่มความแข็งแรงให้กับวัสดุพื้นในวัสดุผสม?",
+                options: [
+                    "วัสดุเสริม หรือ ตัวเสริมแรง",
+                    "สารละลายเมทริกซ์",
+                    "ตัวทำละลายอินทรีย์",
+                    "แก๊สเฉื่อย"
+                ],
+                answer: "วัสดุเสริม หรือ ตัวเสริมแรง"
+            }
+        ];
+
+        // ข้อมูลสำหรับด่านที่ 2 (จับคู่ 5 คู่จากคลังนี้แบบสุ่ม)
+        const MATCH_BANK = [
+            { id: "m1", left: "วัสดุผสม", right: "วัสดุ 2 ประเภทขึ้นไปที่ไม่ละลายเข้าด้วยกัน" },
+            { id: "m2", left: "วัสดุพื้น", right: "เรียกอีกชื่อหนึ่งว่า เมทริกซ์ (Matrix)" },
+            { id: "m3", left: "วัสดุเสริม", right: "เรียกอีกชื่อหนึ่งว่า ตัวเสริมแรง" },
+            { id: "m4", left: "วัสดุผสมจากธรรมชาติ", right: "เช่น กระดูก และ ไม้" },
+            { id: "m5", left: "วัสดุผสมจากการสังเคราะห์", right: "เช่น คอนกรีต และ ไฟเบอร์กลาสส์" },
+            { id: "m6", left: "จุดเด่นของวัสดุผสม", right: "ทำให้มีสมบัติเฉพาะตามที่ต้องการ" }
+        ];
+
+        // ข้อมูลสำหรับด่านที่ 3 (เปิดแผ่นป้าย 6 คู่ = 12 ใบ)
+        const MEMORY_PAIRS = [
+            { pairId: 1, type: "คำศัพท์", text: "วัสดุพื้น" },
+            { pairId: 1, type: "ความหมาย", text: "เมทริกซ์ (Matrix)" },
+            { pairId: 2, type: "คำศัพท์", text: "วัสดุเสริม" },
+            { pairId: 2, type: "ความหมาย", text: "ตัวเสริมแรง" },
+            { pairId: 3, type: "ประเภท", text: "วัสดุผสมจากธรรมชาติ" },
+            { pairId: 3, type: "ตัวอย่าง", text: "กระดูก, ไม้" },
+            { pairId: 4, type: "ประเภท", text: "วัสดุผสมจากการสังเคราะห์" },
+            { pairId: 4, type: "ตัวอย่าง", text: "คอนกรีต, ไฟเบอร์กลาสส์" },
+            { pairId: 5, type: "ลักษณะสำคัญ", text: "องค์ประกอบ 2 ประเภทขึ้นไป" },
+            { pairId: 5, type: "สมบัติ", text: "ไม่ละลายเข้าด้วยกัน" },
+            { pairId: 6, type: "เป้าหมาย", text: "การสร้างวัสดุผสม" },
+            { pairId: 6, type: "ผลลัพธ์", text: "มีสมบัติเฉพาะตามที่ต้องการ" }
+        ];
+
+        /* =====================================================================
+           2. ตัวแปรสถานะเกม (GAME STATE)
+           ===================================================================== */
+        let gameState = {
+            currentLevel: 0,
+            score: 0,
+            levelScores: { 1: 0, 2: 0, 3: 0 },
+            bonusScores: { 1: 0, 2: 0, 3: 0 },
+            timer: 60,
+            timerInterval: null,
+            soundEnabled: true,
+            cameraActive: false,
+            // ด่าน 1
+            q1List: [],
+            q1Index: 0,
+            q1Locked: false,
+            // ด่าน 2
+            m2SelectedLeft: null,
+            m2MatchedCount: 0,
+            m2TotalPairs: 5,
+            // ด่าน 3
+            memFlipped: [],
+            memMatchedPairs: 0,
+            memLocked: false
+        };
+
+        /* =====================================================================
+           3. ระบบเสียงสังเคราะห์ด้วย Tone.js (ไม่มีไฟล์เสียงภายนอก)
+           ===================================================================== */
+        let synth = null;
+        function initAudio() {
+            if (!synth && typeof Tone !== 'undefined') {
+                synth = new Tone.PolySynth(Tone.Synth).toDestination();
+                synth.volume.value = -8;
+            }
+        }
+
+        function playSound(type) {
+            if (!gameState.soundEnabled) return;
+            try {
+                initAudio();
+                if (Tone.context.state !== 'running') Tone.start();
+                const now = Tone.now();
+                if (type === 'click') {
+                    synth.triggerAttackRelease("C5", "32n", now);
+                } else if (type === 'correct') {
+                    synth.triggerAttackRelease(["E5", "G5", "C6"], "16n", now);
+                } else if (type === 'wrong') {
+                    synth.triggerAttackRelease(["A3", "Eb3"], "8n", now);
+                } else if (type === 'levelup') {
+                    synth.triggerAttackRelease("C5", "16n", now);
+                    synth.triggerAttackRelease("E5", "16n", now + 0.1);
+                    synth.triggerAttackRelease("G5", "16n", now + 0.2);
+                    synth.triggerAttackRelease("C6", "8n", now + 0.3);
+                }
+            } catch (e) {
+                // ข้ามหากเบราว์เซอร์บล็อกเสียง
+            }
+        }
+
+        function toggleSound() {
+            gameState.soundEnabled = !gameState.soundEnabled;
+            const icon = document.getElementById('sound-icon');
+            icon.className = gameState.soundEnabled ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark text-slate-500';
+            if (gameState.soundEnabled) playSound('click');
+        }
+
+        /* =====================================================================
+           4. ระบบกล้อง AR จริง (WebRTC getUserMedia) + Fallback
+           ===================================================================== */
+        async function toggleCameraAR() {
+            playSound('click');
+            const video = document.getElementById('ar-camera-feed');
+            const simBg = document.getElementById('ar-sim-bg');
+            const statusText = document.getElementById('ar-status-text');
+            const statusDot = document.getElementById('ar-status-dot');
+            const btnLabel = document.getElementById('cam-btn-label');
+
+            if (!gameState.cameraActive) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: "environment" },
+                        audio: false
+                    });
+                    video.srcObject = stream;
+                    video.classList.remove('hidden');
+                    simBg.classList.add('opacity-25');
+                    gameState.cameraActive = true;
+                    statusText.textContent = "LIVE AR CAMERA";
+                    statusDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping";
+                    btnLabel.textContent = "ปิดกล้อง AR";
+                    showToast("เปิดกล้อง AR สำเร็จ! ส่องไปรอบๆ เพื่อสำรวจ", "success");
+                } catch (err) {
+                    showToast("ไม่สามารถเข้าถึงกล้องได้ ใช้โหมดจำลอง AR แทน", "warning");
+                }
+            } else {
+                const stream = video.srcObject;
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                video.srcObject = null;
+                video.classList.add('hidden');
+                simBg.classList.remove('opacity-25');
+                gameState.cameraActive = false;
+                statusText.textContent = "AR SIMULATION";
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping";
+                btnLabel.textContent = "เปิดกล้อง AR";
+                showToast("สลับกลับสู่โหมดจำลอง AR", "info");
+            }
+        }
+
+        /* =====================================================================
+           5. ระบบ 3D AR Object (Three.js) จำลองโครงสร้างวัสดุผสมลอยในฉาก
+           ===================================================================== */
+        let scene, camera, renderer, compositeGroup;
+        function initThreeAR() {
+            const container = document.getElementById('three-container');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 7;
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // แสงสว่าง
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const pointLight = new THREE.PointLight(0x22d3ee, 1.5);
+            pointLight.position.set(5, 5, 5);
+            scene.add(pointLight);
+
+            // สร้างโมเดล 3D จำลองวัสดุผสม (ชั้นวัสดุพื้น + แท่งเส้นใยเสริมแรง)
+            compositeGroup = new THREE.Group();
+
+            // แผ่นวัสดุพื้น (Matrix) โปร่งแสง
+            const matrixGeo = new THREE.BoxGeometry(3.2, 0.7, 2.2);
+            const matrixMat = new THREE.MeshPhongMaterial({
+                color: 0x0ea5e9,
+                transparent: true,
+                opacity: 0.35,
+                shininess: 90
+            });
+            const matrixMesh = new THREE.Mesh(matrixGeo, matrixMat);
+            compositeGroup.add(matrixMesh);
+
+            // เส้นขอบ Wireframe
+            const edges = new THREE.EdgesGeometry(matrixGeo);
+            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x38bdf8 }));
+            compositeGroup.add(line);
+
+            // แท่งวัสดุเสริมแรง (Reinforcement Rods) สอดอยู่ภายใน
+            const rodGeo = new THREE.CylinderGeometry(0.12, 0.12, 3.6, 16);
+            rodGeo.rotateZ(Math.PI / 2);
+            const rodMat = new THREE.MeshPhongMaterial({ color: 0xc084fc, emissive: 0x3b0764 });
+
+            for (let z = -0.7; z <= 0.7; z += 0.46) {
+                const rod = new THREE.Mesh(rodGeo, rodMat);
+                rod.position.set(0, 0, z);
+                compositeGroup.add(rod);
+            }
+
+            compositeGroup.position.set(0, 2.1, -1.5);
+            compositeGroup.rotation.x = 0.4;
+            scene.add(compositeGroup);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function animateThree() {
+            requestAnimationFrame(animateThree);
+            if (compositeGroup) {
+                compositeGroup.rotation.y += 0.008;
+                compositeGroup.position.y = 2.1 + Math.sin(Date.now() * 0.002) * 0.15;
+            }
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+
+        /* =====================================================================
+           6. ฟังก์ชันช่วยจัดการอาร์เรย์และการแสดงผล UI
+           ===================================================================== */
+        function shuffleArray(array) {
+            const arr = [...array];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        function showToast(msg, type = 'info') {
+            const box = document.getElementById('toast-box');
+            const content = document.getElementById('toast-content');
+            
+            let styles = "bg-slate-900/90 text-cyan-300 border-cyan-400";
+            let icon = "fa-circle-info";
+            if (type === 'success') {
+                styles = "bg-emerald-950/95 text-emerald-300 border-emerald-400";
+                icon = "fa-circle-check";
+            } else if (type === 'error') {
+                styles = "bg-rose-950/95 text-rose-300 border-rose-400";
+                icon = "fa-circle-xmark";
+            } else if (type === 'warning') {
+                styles = "bg-amber-950/95 text-amber-300 border-amber-400";
+                icon = "fa-triangle-exclamation";
+            }
+
+            content.className = `px-5 py-2.5 rounded-full font-bold text-xs sm:text-sm shadow-2xl border backdrop-blur-md flex items-center gap-2 ${styles}`;
+            content.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${msg}</span>`;
+
+            box.classList.remove('opacity-0', '-translate-y-4');
+            box.classList.add('opacity-100', 'translate-y-0');
+
+            clearTimeout(window.toastTimer);
+            window.toastTimer = setTimeout(() => {
+                box.classList.remove('opacity-100', 'translate-y-0');
+                box.classList.add('opacity-0', '-translate-y-4');
+            }, 1800);
+        }
+
+        function showScreen(screenId) {
+            const screens = ['screen-cover', 'screen-level-1', 'screen-level-2', 'screen-level-3', 'screen-level-clear', 'screen-summary'];
+            screens.forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            document.getElementById(screenId).classList.remove('hidden');
+
+            const hud = document.getElementById('game-hud');
+            if (['screen-level-1', 'screen-level-2', 'screen-level-3'].includes(screenId)) {
+                hud.classList.remove('hidden');
+            } else {
+                hud.classList.add('hidden');
+            }
+        }
+
+        function toggleStudyModal(show) {
+            playSound('click');
+            const modal = document.getElementById('study-modal');
+            if (show) modal.classList.remove('hidden');
+            else modal.classList.add('hidden');
+        }
+
+        function updateHUD() {
+            document.getElementById('hud-score').textContent = gameState.score;
+            document.getElementById('hud-timer').textContent = gameState.timer;
+            const timerEl = document.getElementById('hud-timer');
+            if (gameState.timer <= 10) {
+                timerEl.classList.add('text-rose-400', 'animate-pulse');
+                timerEl.classList.remove('text-amber-300');
+            } else {
+                timerEl.classList.remove('text-rose-400', 'animate-pulse');
+                timerEl.classList.add('text-amber-300');
+            }
+        }
+
+        /* =====================================================================
+           7. ระบบตัวจับเวลาแต่ละด่าน (LEVEL TIMER)
+           ===================================================================== */
+        function startTimer(seconds, onTimeout) {
+            clearInterval(gameState.timerInterval);
+            gameState.timer = seconds;
+            updateHUD();
+
+            gameState.timerInterval = setInterval(() => {
+                gameState.timer--;
+                updateHUD();
+                if (gameState.timer <= 0) {
+                    clearInterval(gameState.timerInterval);
+                    onTimeout();
+                }
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(gameState.timerInterval);
+        }
+
+        /* =====================================================================
+           8. เริ่มเกม & ควบคุมการเปลี่ยนด่าน
+           ===================================================================== */
+        function goHome() {
+            playSound('click');
+            stopTimer();
+            showScreen('screen-cover');
+        }
+
+        function startGame() {
+            playSound('click');
+            gameState.score = 0;
+            gameState.levelScores = { 1: 0, 2: 0, 3: 0 };
+            gameState.bonusScores = { 1: 0, 2: 0, 3: 0 };
+            startLevel1();
+        }
+
+        function finishLevel(levelNum, isTimeout = false) {
+            stopTimer();
+            playSound('levelup');
+
+            // คำนวณโบนัสจากเวลาที่เหลือ (วินาทีละ 5 คะแนน)
+            const timeLeft = isTimeout ? 0 : gameState.timer;
+            const bonus = timeLeft * 5;
+            gameState.bonusScores[levelNum] = bonus;
+            gameState.score += bonus;
+
+            const names = {
+                1: "ด่านที่ 1: สแกนตอบคำถาม",
+                2: "ด่านที่ 2: จับคู่พลังงาน",
+                3: "ด่านที่ 3: เปิดแผ่นป้าย AR"
+            };
+
+            document.getElementById('clear-title').textContent = isTimeout ? `หมดเวลา ${names[levelNum]}` : `เคลียร์ ${names[levelNum]}!`;
+            document.getElementById('clear-subtitle').textContent = isTimeout ? "ระบบบันทึกคะแนนที่ทำได้เรียบร้อยแล้ว" : "ยอดเยี่ยมมาก! คุณได้รับโบนัสความเร็ว";
+            document.getElementById('clear-base-score').textContent = `+${gameState.levelScores[levelNum]} คะแนน`;
+            document.getElementById('clear-time-left').textContent = timeLeft;
+            document.getElementById('clear-bonus-score').textContent = `+${bonus} คะแนน`;
+            document.getElementById('clear-total-score').textContent = `${gameState.score} คะแนน`;
+
+            const nextBtn = document.getElementById('btn-next-level');
+            if (levelNum < 3) {
+                nextBtn.innerHTML = `<span>เข้าสู่ด่านที่ ${levelNum + 1}</span> <i class="fa-solid fa-arrow-right"></i>`;
+            } else {
+                nextBtn.innerHTML = `<span>ดูสรุปคะแนนทั้งหมด</span> <i class="fa-solid fa-trophy"></i>`;
+            }
+
+            showScreen('screen-level-clear');
+        }
+
+        function proceedNextLevel() {
+            playSound('click');
+            if (gameState.currentLevel === 1) {
+                startLevel2();
+            } else if (gameState.currentLevel === 2) {
+                startLevel3();
+            } else {
+                showFinalSummary();
+            }
+        }
+
+        /* =====================================================================
+           9. ด่านที่ 1: ทำข้อสอบ 4 ตัวเลือก 5 ข้อ (สุ่มโจทย์ + สลับตัวเลือกทุกครั้ง)
+           ===================================================================== */
+        function startLevel1() {
+            gameState.currentLevel = 1;
+            document.getElementById('hud-level-badge').textContent = "ด่านที่ 1/3";
+            document.getElementById('hud-level-name').textContent = "สแกนตอบคำถาม";
+
+            // สุ่มเลือก 5 ข้อจากคลัง และสลับลำดับตัวเลือกในแต่ละข้อ
+            const selectedQuestions = shuffleArray(QUIZ_BANK).slice(0, 5).map(item => ({
+                q: item.q,
+                options: shuffleArray(item.options),
+                answer: item.answer
+            }));
+
+            gameState.q1List = selectedQuestions;
+            gameState.q1Index = 0;
+            gameState.q1Locked = false;
+
+            showScreen('screen-level-1');
+            renderQuestion1();
+            startTimer(60, () => finishLevel(1, true));
+        }
+
+        function renderQuestion1() {
+            const idx = gameState.q1Index;
+            const item = gameState.q1List[idx];
+
+            document.getElementById('q1-current').textContent = idx + 1;
+            document.getElementById('q1-progress').style.width = `${((idx + 1) / 5) * 100}%`;
+            document.getElementById('q1-question').textContent = item.q;
+
+            const optionsContainer = document.getElementById('q1-options');
+            optionsContainer.innerHTML = '';
+            const prefixes = ['ก.', 'ข.', 'ค.', 'ง.'];
+
+            item.options.forEach((optText, i) => {
+                const btn = document.createElement('button');
+                btn.className = "btn-game text-left p-4 rounded-2xl bg-slate-800/90 hover:bg-slate-700/90 border border-cyan-500/30 text-white font-medium text-sm sm:text-base flex items-start gap-3 transition-all";
+                btn.innerHTML = `
+                    <span class="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0">${prefixes[i]}</span>
+                    <span class="leading-snug">${optText}</span>
+                `;
+                btn.onclick = () => handleAnswer1(btn, optText, item.answer);
+                optionsContainer.appendChild(btn);
+            });
+        }
+
+        function handleAnswer1(btnEl, chosen, correct) {
+            if (gameState.q1Locked) return;
+            gameState.q1Locked = true;
+
+            const allBtns = document.getElementById('q1-options').querySelectorAll('button');
+            if (chosen === correct) {
+                playSound('correct');
+                btnEl.classList.remove('bg-slate-800/90', 'border-cyan-500/30');
+                btnEl.classList.add('bg-emerald-600/80', 'border-emerald-300', 'shadow-[0_0_15px_rgba(16,185,129,0.5)]');
+                gameState.score += 100;
+                gameState.levelScores[1] += 100;
+                updateHUD();
+                showToast("ถูกต้อง! +100 คะแนน", "success");
+            } else {
+                playSound('wrong');
+                btnEl.classList.remove('bg-slate-800/90', 'border-cyan-500/30');
+                btnEl.classList.add('bg-rose-600/80', 'border-rose-300');
+                // ไฮไลต์ข้อที่ถูกให้เรียนรู้
+                allBtns.forEach(b => {
+                    if (b.textContent.includes(correct)) {
+                        b.classList.add('bg-emerald-600/50', 'border-emerald-400');
+                    }
+                });
+                showToast("ยังไม่ถูก! ดูคำตอบที่ไฮไลต์สีเขียว", "error");
+            }
+
+            setTimeout(() => {
+                gameState.q1Index++;
+                gameState.q1Locked = false;
+                if (gameState.q1Index < 5) {
+                    renderQuestion1();
+                } else {
+                    finishLevel(1, false);
+                }
+            }, 1050);
+        }
+
+        /* =====================================================================
+           10. ด่านที่ 2: จับคู่ความรู้ (สุ่ม 5 คู่ และสลับตำแหน่งซ้าย-ขวาทุกครั้ง)
+           ===================================================================== */
+        function startLevel2() {
+            gameState.currentLevel = 2;
+            document.getElementById('hud-level-badge').textContent = "ด่านที่ 2/3";
+            document.getElementById('hud-level-name').textContent = "จับคู่พลังงาน";
+
+            const chosenPairs = shuffleArray(MATCH_BANK).slice(0, 5);
+            gameState.m2TotalPairs = chosenPairs.length;
+            gameState.m2MatchedCount = 0;
+            gameState.m2SelectedLeft = null;
+
+            const leftItems = shuffleArray(chosenPairs.map(p => ({ id: p.id, text: p.left })));
+            const rightItems = shuffleArray(chosenPairs.map(p => ({ id: p.id, text: p.right })));
+
+            const leftCol = document.getElementById('match-left-col');
+            const rightCol = document.getElementById('match-right-col');
+            leftCol.innerHTML = '';
+            rightCol.innerHTML = '';
+
+            leftItems.forEach(item => {
+                const btn = document.createElement('button');
+                btn.dataset.id = item.id;
+                btn.className = "btn-game min-h-[64px] p-3 rounded-2xl bg-slate-800/90 hover:bg-slate-700 border-2 border-purple-400/40 text-purple-200 font-bold text-xs sm:text-sm text-center flex items-center justify-center transition-all";
+                btn.textContent = item.text;
+                btn.onclick = () => selectMatchLeft(btn);
+                leftCol.appendChild(btn);
+            });
+
+            rightItems.forEach(item => {
+                const btn = document.createElement('button');
+                btn.dataset.id = item.id;
+                btn.className = "btn-game min-h-[64px] p-3 rounded-2xl bg-slate-800/90 hover:bg-slate-700 border-2 border-cyan-400/40 text-cyan-100 font-medium text-xs sm:text-sm text-center flex items-center justify-center transition-all";
+                btn.textContent = item.text;
+                btn.onclick = () => selectMatchRight(btn);
+                rightCol.appendChild(btn);
+            });
+
+            showScreen('screen-level-2');
+            startTimer(60, () => finishLevel(2, true));
+        }
+
+        function selectMatchLeft(btn) {
+            if (btn.disabled) return;
+            playSound('click');
+
+            // ล้างไฮไลต์ปุ่มซ้ายเดิม
+            document.getElementById('match-left-col').querySelectorAll('button').forEach(b => {
+                if (!b.disabled) {
+                    b.classList.remove('bg-purple-600', 'border-white', 'scale-105', 'shadow-lg');
+                    b.classList.add('bg-slate-800/90', 'border-purple-400/40');
+                }
+            });
+
+            btn.classList.remove('bg-slate-800/90', 'border-purple-400/40');
+            btn.classList.add('bg-purple-600', 'border-white', 'scale-105', 'shadow-lg');
+            gameState.m2SelectedLeft = btn;
+        }
+
+        function selectMatchRight(rightBtn) {
+            if (rightBtn.disabled) return;
+            if (!gameState.m2SelectedLeft) {
+                playSound('wrong');
+                showToast("กรุณาแตะเลือกหัวข้อทางฝั่งซ้ายก่อน!", "warning");
+                return;
+            }
+
+            const leftBtn = gameState.m2SelectedLeft;
+            if (leftBtn.dataset.id === rightBtn.dataset.id) {
+                // จับคู่สำเร็จ
+                playSound('correct');
+                [leftBtn, rightBtn].forEach(b => {
+                    b.disabled = true;
+                    b.className = "min-h-[64px] p-3 rounded-2xl bg-emerald-600/80 border-2 border-emerald-300 text-white font-bold text-xs sm:text-sm text-center flex items-center justify-center opacity-85";
+                });
+                gameState.m2SelectedLeft = null;
+                gameState.m2MatchedCount++;
+                gameState.score += 100;
+                gameState.levelScores[2] += 100;
+                updateHUD();
+                showToast("จับคู่ถูกต้อง! +100 คะแนน", "success");
+
+                if (gameState.m2MatchedCount === gameState.m2TotalPairs) {
+                    setTimeout(() => finishLevel(2, false), 600);
+                }
+            } else {
+                // จับคู่ผิด
+                playSound('wrong');
+                rightBtn.classList.add('bg-rose-600', 'border-rose-300');
+                showToast("คู่ยังไม่ตรงกัน ลองใหม่อีกครั้ง!", "error");
+                setTimeout(() => {
+                    rightBtn.classList.remove('bg-rose-600', 'border-rose-300');
+                }, 450);
+            }
+        }
+
+        /* =====================================================================
+           11. ด่านที่ 3: เปิดแผ่นป้าย AR Memory (สลับตำแหน่งการ์ดทั้ง 12 ใบทุกครั้ง)
+           ===================================================================== */
+        function startLevel3() {
+            gameState.currentLevel = 3;
+            document.getElementById('hud-level-badge').textContent = "ด่านที่ 3/3";
+            document.getElementById('hud-level-name').textContent = "เปิดแผ่นป้าย AR";
+
+            const shuffledCards = shuffleArray(MEMORY_PAIRS);
+            gameState.memFlipped = [];
+            gameState.memMatchedPairs = 0;
+            gameState.memLocked = false;
+
+            const grid = document.getElementById('memory-grid');
+            grid.innerHTML = '';
+
+            shuffledCards.forEach((card, index) => {
+                const cardWrapper = document.createElement('div');
+                cardWrapper.className = "flip-card h-24 sm:h-28 cursor-pointer";
+                cardWrapper.dataset.pairId = card.pairId;
+                cardWrapper.dataset.matched = "false";
+
+                const badgeColor = (card.type === "คำศัพท์" || card.type === "ประเภท" || card.type === "ลักษณะสำคัญ" || card.type === "เป้าหมาย")
+                    ? "bg-amber-500/30 text-amber-200 border-amber-400/50"
+                    : "bg-cyan-500/30 text-cyan-200 border-cyan-400/50";
+
+                cardWrapper.innerHTML = `
+                    <div class="flip-card-inner shadow-lg">
+                        <!-- ด้านหน้าป้าย (คว่ำอยู่) -->
+                        <div class="flip-card-front bg-gradient-to-br from-slate-800 to-indigo-950 border-2 border-amber-400/50 hover:border-amber-300">
+                            <i class="fa-solid fa-cube text-2xl sm:text-3xl text-amber-400/80 mb-1"></i>
+                            <span class="font-sci text-xs text-slate-400">AR #${index + 1}</span>
+                        </div>
+                        <!-- ด้านหลังป้าย (หงายข้อมูล) -->
+                        <div class="flip-card-back bg-slate-900 border-2 border-cyan-400">
+                            <span class="text-[10px] px-2 py-0.5 rounded-full border mb-1 ${badgeColor}">${card.type}</span>
+                            <div class="text-xs sm:text-sm font-bold text-white leading-tight">${card.text}</div>
+                        </div>
+                    </div>
+                `;
+
+                cardWrapper.onclick = () => handleCardFlip(cardWrapper);
+                grid.appendChild(cardWrapper);
+            });
+
+            showScreen('screen-level-3');
+            startTimer(75, () => finishLevel(3, true));
+        }
+
+        function handleCardFlip(cardEl) {
+            if (gameState.memLocked) return;
+            if (cardEl.dataset.matched === "true") return;
+            if (cardEl.classList.contains('flipped')) return;
+
+            playSound('click');
+            cardEl.classList.add('flipped');
+            gameState.memFlipped.push(cardEl);
+
+            if (gameState.memFlipped.length === 2) {
+                gameState.memLocked = true;
+                const [c1, c2] = gameState.memFlipped;
+
+                if (c1.dataset.pairId === c2.dataset.pairId) {
+                    // เปิดเจอคู่ที่ตรงกัน
+                    playSound('correct');
+                    c1.dataset.matched = "true";
+                    c2.dataset.matched = "true";
+                    c1.querySelector('.flip-card-back').classList.replace('border-cyan-400', 'border-emerald-400');
+                    c1.querySelector('.flip-card-back').classList.add('bg-emerald-950/90');
+                    c2.querySelector('.flip-card-back').classList.replace('border-cyan-400', 'border-emerald-400');
+                    c2.querySelector('.flip-card-back').classList.add('bg-emerald-950/90');
+
+                    gameState.memFlipped = [];
+                    gameState.memLocked = false;
+                    gameState.memMatchedPairs++;
+                    gameState.score += 120;
+                    gameState.levelScores[3] += 120;
+                    updateHUD();
+                    showToast("จับคู่แผ่นป้ายสำเร็จ! +120 คะแนน", "success");
+
+                    if (gameState.memMatchedPairs === 6) {
+                        setTimeout(() => finishLevel(3, false), 650);
+                    }
+                } else {
+                    // ไม่ตรงกัน คว่ำกลับ
+                    playSound('wrong');
+                    setTimeout(() => {
+                        c1.classList.remove('flipped');
+                        c2.classList.remove('flipped');
+                        gameState.memFlipped = [];
+                        gameState.memLocked = false;
+                    }, 900);
+                }
+            }
+        }
+
+        /* =====================================================================
+           12. หน้าสรุปผลคะแนนหลังจบเกม (FINAL SUMMARY)
+           ===================================================================== */
+        function showFinalSummary() {
+            playSound('levelup');
+            const totalBonus = gameState.bonusScores[1] + gameState.bonusScores[2] + gameState.bonusScores[3];
+
+            document.getElementById('sum-lvl1').textContent = `${gameState.levelScores[1]} คะแนน`;
+            document.getElementById('sum-lvl2').textContent = `${gameState.levelScores[2]} คะแนน`;
+            document.getElementById('sum-lvl3').textContent = `${gameState.levelScores[3]} คะแนน`;
+            document.getElementById('sum-bonus').textContent = `+${totalBonus} คะแนน`;
+            document.getElementById('sum-grand-total').textContent = `${gameState.score} คะแนน`;
+
+            // จัดอันดับยศและจำนวนดาวตามคะแนนรวม
+            const rankEl = document.getElementById('summary-rank');
+            const starsEl = document.getElementById('summary-stars');
+
+            if (gameState.score >= 2100) {
+                rankEl.textContent = "ระดับ: ปรมาจารย์วิศวกรรมวัสดุผสม 🏆";
+                starsEl.innerHTML = `<i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i>`;
+            } else if (gameState.score >= 1400) {
+                rankEl.textContent = "ระดับ: นักวิทยาศาสตร์วัสดุตัวจริง 🥈";
+                starsEl.innerHTML = `<i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-regular fa-star text-slate-600"></i>`;
+            } else {
+                rankEl.textContent = "ระดับ: นักสำรวจวัสดุฝึกหัด 🥉";
+                starsEl.innerHTML = `<i class="fa-solid fa-star"></i><i class="fa-regular fa-star text-slate-600"></i><i class="fa-regular fa-star text-slate-600"></i>`;
+            }
+
+            showScreen('screen-summary');
+        }
+
+        // เริ่มต้นฉาก 3D AR เมื่อโหลดหน้าเว็บเสร็จ
+        window.onload = function () {
+            initThreeAR();
+            animateThree();
+        };
+    </script>
+</body>
+</html>
